@@ -1,9 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { ReceiptSchema, type Receipt } from "./types";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const MODEL = "claude-sonnet-4-6";
+const EXTRACT_MODEL = "claude-sonnet-4-6";
+const SEGMENT_MODEL = "claude-haiku-4-5-20251001";
 
 const SYSTEM_PROMPT = `You extract line items from receipt photos.
 
@@ -69,7 +71,7 @@ export async function extractReceipt(images: ImageInput[]): Promise<Receipt> {
 
 async function callOnce(content: Anthropic.ContentBlockParam[]): Promise<string> {
   const resp = await client.messages.create({
-    model: MODEL,
+    model: EXTRACT_MODEL,
     max_tokens: 4096,
     system: [
       {
@@ -105,4 +107,96 @@ function tryParse(
 function stripCodeFence(s: string): string {
   const m = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
   return m ? m[1] : s;
+}
+
+const SegmentationSchema = z.object({
+  groups: z
+    .array(
+      z.object({
+        frame_indices: z.array(z.number().int().nonnegative()).min(1),
+        label: z.string().optional().nullable(),
+      }),
+    )
+    .min(1),
+});
+
+const SEGMENT_SYSTEM = `You analyze video frames that may show one or more paper receipts.
+
+You will receive N frames in order. Your job: group the frames by which physical receipt they show.
+
+Return ONLY this JSON (no prose, no markdown, no code fences):
+{
+  "groups": [
+    { "frame_indices": [int, ...], "label": "Receipt 1" }
+  ]
+}
+
+Rules:
+- Each group represents ONE physical receipt. Different angles, partial views, or zooms of the same paper belong to the same group.
+- Skip frames that are blurry-only, hands-only, blank, transitions, or do not show a readable receipt.
+- frame_indices use the 0-based order in which frames were provided.
+- A frame index must appear in at most one group.
+- If you are unsure whether two visually-different views are the same receipt, prefer the SAME group (merge), not separate groups. We would rather under-split than over-split.
+- If you genuinely see only one receipt across the whole video, return exactly one group containing all readable frames.`;
+
+export type FrameGroup = { frame_indices: number[]; label: string };
+
+export async function segmentVideoFrames(images: ImageInput[]): Promise<FrameGroup[]> {
+  if (images.length === 0) return [];
+  if (images.length === 1) return [{ frame_indices: [0], label: "Receipt 1" }];
+
+  const content: Anthropic.ContentBlockParam[] = images.flatMap((img, idx) => [
+    { type: "text" as const, text: `frame ${idx}:` },
+    {
+      type: "image" as const,
+      source: {
+        type: "base64" as const,
+        media_type: img.mediaType as Anthropic.Base64ImageSource["media_type"],
+        data: img.base64,
+      },
+    },
+  ]);
+  content.push({
+    type: "text",
+    text: `Group these ${images.length} frames by physical receipt. JSON only.`,
+  });
+
+  const resp = await client.messages.create({
+    model: SEGMENT_MODEL,
+    max_tokens: 1024,
+    system: SEGMENT_SYSTEM,
+    messages: [{ role: "user", content }],
+  });
+  const block = resp.content.find((b) => b.type === "text");
+  if (!block || block.type !== "text") {
+    return [{ frame_indices: images.map((_, i) => i), label: "Receipt 1" }];
+  }
+
+  const cleaned = stripCodeFence(block.text.trim());
+  let json: unknown;
+  try {
+    json = JSON.parse(cleaned);
+  } catch {
+    return [{ frame_indices: images.map((_, i) => i), label: "Receipt 1" }];
+  }
+  const parsed = SegmentationSchema.safeParse(json);
+  if (!parsed.success) {
+    return [{ frame_indices: images.map((_, i) => i), label: "Receipt 1" }];
+  }
+
+  const seen = new Set<number>();
+  const groups: FrameGroup[] = [];
+  parsed.data.groups.forEach((g, i) => {
+    const idxs = g.frame_indices.filter(
+      (n) => n >= 0 && n < images.length && !seen.has(n),
+    );
+    idxs.forEach((n) => seen.add(n));
+    if (idxs.length === 0) return;
+    groups.push({ frame_indices: idxs, label: g.label || `Receipt ${i + 1}` });
+  });
+
+  if (groups.length === 0) {
+    return [{ frame_indices: images.map((_, i) => i), label: "Receipt 1" }];
+  }
+  return groups;
 }

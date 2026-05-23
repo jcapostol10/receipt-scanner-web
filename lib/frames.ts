@@ -2,7 +2,9 @@
 // 1 frame per second, deduped via average-hash Hamming distance.
 
 const FPS = 1;
-const MAX_FRAMES = 12;
+const MAX_FRAMES = 30;
+const MAX_LONG_EDGE = 1280;
+const JPEG_QUALITY = 0.72;
 const HASH_SIZE = 8;
 const DUPE_THRESHOLD = 6; // Hamming distance below this = duplicate
 
@@ -27,9 +29,14 @@ export async function extractFramesFromVideo(file: File): Promise<ExtractedFrame
       throw new Error("video duration unknown");
     }
 
+    const { width: outW, height: outH } = fitWithin(
+      video.videoWidth,
+      video.videoHeight,
+      MAX_LONG_EDGE,
+    );
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = outW;
+    canvas.height = outH;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas 2d context unavailable");
 
@@ -86,9 +93,16 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
       "image/jpeg",
-      0.85,
+      JPEG_QUALITY,
     );
   });
+}
+
+function fitWithin(w: number, h: number, maxLongEdge: number): { width: number; height: number } {
+  const longEdge = Math.max(w, h);
+  if (longEdge <= maxLongEdge) return { width: w, height: h };
+  const scale = maxLongEdge / longEdge;
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
 }
 
 function averageHash(img: ImageData): bigint {

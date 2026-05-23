@@ -59,7 +59,7 @@ export default function HomePage() {
 
       for (let i = 0; i < updated.length; i++) {
         const pf = updated[i];
-        const key = `${i}_${pf.file.name}`;
+        const key = `${pf.kind === "video" ? "v" : "i"}:${i}_${pf.file.name}`;
         if (pf.kind === "image") {
           form.append(key, pf.file, pf.file.name);
           updated[i] = { ...pf, status: "ready", framesCount: 1 };
@@ -120,8 +120,8 @@ export default function HomePage() {
       <header className="mb-8">
         <h1 className="text-3xl font-semibold tracking-tight">Receipt Scanner</h1>
         <p className="mt-2 text-zinc-600">
-          Drop photos or videos of receipts. Get back an Excel file with the line items.
-          Files are processed in memory and never stored.
+          Drop photos or videos of receipts. A single video can contain multiple receipts
+          — they'll be split into separate sheets. Files are processed in memory and never stored.
         </p>
       </header>
 
