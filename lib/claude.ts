@@ -14,14 +14,21 @@ Return ONLY a JSON object matching this exact schema (no prose, no markdown, no 
   "currency": string | null,
   "items": [
     { "name": string, "qty": number, "unit_price": number, "total": number }
-  ]
+  ],
+  "subtotal": number | null,
+  "tax": number | null,
+  "tax_label": string | null,
+  "tax_rate": number | null,
+  "total": number | null
 }
 
 Rules:
-- If a value is unreadable, omit that item rather than guess.
+- If a value is unreadable, omit that item rather than guess. For top-level fields, use null when not present on the receipt.
 - When multiple frames of the same receipt are provided, treat them as one receipt and do not duplicate items.
-- "qty" defaults to 1 if not shown. "total" = qty * unit_price when total is not explicitly printed.
-- Numbers must be plain numbers, no currency symbols, no thousands separators.
+- "qty" defaults to 1 if not shown. Item "total" = qty * unit_price when not explicitly printed.
+- "subtotal" is the items total before tax. "tax" is the tax/VAT amount as printed. "tax_label" is the printed label (e.g. "VAT", "GST", "Sales Tax", "PH VAT 12%"). "tax_rate" is the decimal rate if printed (e.g. 0.12 for 12%).
+- "total" is the grand total the customer paid, including tax.
+- Numbers must be plain numbers, no currency symbols, no thousands separators. Use a period as the decimal separator.
 - Output must be valid JSON parseable by JSON.parse.`;
 
 type ImageInput = { mediaType: string; base64: string };
